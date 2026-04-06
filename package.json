@@ -1,0 +1,24 @@
+{
+  "name": "fb-agent",
+  "version": "1.0.0",
+  "description": "Fully automated Facebook Page AI Agent powered by Claude",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.7.2",
+    "better-sqlite3": "^11.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "winston": "^3.13.0"
+  }
+}
