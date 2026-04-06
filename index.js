@@ -17,7 +17,6 @@ import {
   registerBotCommands,
 } from './src/services/telegram.js';
 import { startAutoFlow, handleReschedule, handleList, resetAutoFlow } from './src/flows/contentFlow.js';
-import { dbAll } from './src/db/index.js';
 import config from './src/config.js';
 
 // Ensure data directory exists
@@ -27,62 +26,63 @@ if (!fs.existsSync(dataDir)) {
 }
 
 async function main() {
-  // Initialize database
+  // 1. Initialize database
   initDb();
 
-  // Create Express app
-  const app = express();
-
-  // Setup webhooks (Telegram + Meta + internal routes)
-  setupWebhooks(app);
-
-  // Set Telegram webhook if WEBHOOK_BASE_URL is configured
-  if (config.WEBHOOK_BASE_URL) {
-    await setWebhook(config.WEBHOOK_BASE_URL);
-  } else {
-    logger.warn('WEBHOOK_BASE_URL not set — Telegram webhook not configured. Set it to your public HTTPS URL.');
-  }
-
-  // Register Telegram bot commands (shows /start button in chat)
-  await registerBotCommands();
-
-  // Wire up Telegram → flow callbacks (avoids circular imports)
+  // 2. Wire up flow callbacks FIRST (before any bot handlers fire)
   registerAutoFlowCallback(startAutoFlow);
   registerRescheduleCallback(handleReschedule);
   registerListCallback(handleList);
   registerResetFlowCallback(resetAutoFlow);
 
-  // Start cron jobs
-  startAllJobs();
+  // 3. Create Express app and register all routes
+  const app = express();
+  setupWebhooks(app);
 
-  // Start Express server
-  const server = app.listen(config.PORT, () => {
-    logger.info(`Facebook AI Agent running on port ${config.PORT}`);
+  // 4. Start server and WAIT until it is actually listening
+  const server = await new Promise((resolve) => {
+    const s = app.listen(config.PORT, () => {
+      logger.info(`Server listening on port ${config.PORT}`);
+      resolve(s);
+    });
   });
 
-  // First-run greeting
-  const topics = dbAll("SELECT * FROM topics WHERE status = 'pending' LIMIT 1");
-  const winnerPatterns = dbAll('SELECT * FROM winner_patterns LIMIT 1');
+  // 5. Now that the server is ready, configure Telegram
+  if (config.WEBHOOK_BASE_URL) {
+    logger.info('Webhook mode — setting webhook', { url: config.WEBHOOK_BASE_URL });
+    await setWebhook(config.WEBHOOK_BASE_URL);
+  } else {
+    logger.info('Polling mode — WEBHOOK_BASE_URL not set');
+  }
 
-  showMainMenu('👋 *Facebook AI Agent is live!* Tap a button below to get started.').catch(() => {});
+  await registerBotCommands();
+
+  // 6. Start cron jobs
+  startAllJobs();
+
+  // 7. Send welcome message — log error if it fails so we know the bot is connected
+  try {
+    await showMainMenu('👋 *Facebook AI Agent is live!* Tap a button below to get started.');
+    logger.info('Welcome message sent', { chatId: config.TELEGRAM_CHAT_ID });
+  } catch (err) {
+    logger.error('Failed to send welcome message — check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID', { error: err.message });
+  }
 
   // Graceful shutdown
   function shutdown(signal) {
-    logger.info(`Received ${signal}, shutting down gracefully...`);
+    logger.info(`Received ${signal}, shutting down...`);
     server.close(() => {
       stopAllJobs();
       closeDb();
       logger.info('Shutdown complete.');
       process.exit(0);
     });
-    // Force exit after 10s
     setTimeout(() => process.exit(1), 10000);
   }
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
 
-  // Catch unhandled errors
   process.on('uncaughtException', (err) => {
     logger.error('Uncaught exception', { error: err.message, stack: err.stack });
     sendMessage(`🚨 *Unhandled error:* ${err.message}`).catch(() => {});

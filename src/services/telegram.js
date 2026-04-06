@@ -763,15 +763,17 @@ function setupWebhookHandlers(app) {
       return;
     }
 
-    // ── 6. /start slash or plain message → trigger auto flow ─────────────────
+    // ── 6. /start slash or plain message → show menu / trigger flow ──────────
     if (text.startsWith('/') && !text.match(/^\/start$/i)) return; // ignore unknown slash commands
 
     if (approvalCallbacks.size > 0) {
-      await sendMessage('⏳ A draft is waiting for your decision — use the buttons above the post.');
+      await sendMessage('⏳ A draft is waiting for your decision — use the buttons above the post.', { reply_markup: MAIN_MENU });
     } else if (autoFlowCallback) {
+      // Show menu immediately so user sees something, then start the flow
+      await showMainMenu('👍 Starting...');
       autoFlowCallback().catch((err) => logger.error('Auto flow callback error', { error: err.message }));
     } else {
-      await sendMessage('👋 Agent is starting up. Please try again in a moment.');
+      await showMainMenu('👋 *Facebook AI Agent is ready!*');
     }
   });
 
