@@ -49,6 +49,19 @@ async function sendMessage(text, extra = {}) {
   }
 }
 
+const MAIN_MENU = {
+  keyboard: [
+    [{ text: '🚀 Start' }, { text: '📋 List'       }],
+    [{ text: '🔄 Reschedule' }, { text: '📖 fb-commands' }],
+  ],
+  resize_keyboard: true,
+  persistent: true,
+};
+
+async function showMainMenu(text = '👋 What would you like to do?') {
+  return sendMessage(text, { reply_markup: MAIN_MENU });
+}
+
 async function sendWeeklyReport(reportText)       { return sendMessage(`📊 *Weekly Report*\n\n${reportText}`); }
 async function sendMetricsAlert(postTitle, metrics) {
   return sendMessage(
@@ -406,6 +419,7 @@ function setupWebhookHandlers(app) {
       await b.editMessageText("👋 *Goodbye!* Come back whenever you're ready to create content.", {
         chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
       }).catch(() => {});
+      await showMainMenu();
       return;
     }
 
@@ -702,19 +716,19 @@ function setupWebhookHandlers(app) {
     logger.debug('Telegram message received', { chatId, text: text.substring(0, 100) });
 
     // ── 1. fb-commands — always show, never interrupts anything ──────────────
-    if (lc === 'fb-commands') {
+    if (lc === 'fb-commands' || lc === '📖 fb-commands') {
       await sendFbCommands();
       return;
     }
 
     // ── 2. list — show posts without interrupting active session ─────────────
-    if (lc === 'list') {
+    if (lc === 'list' || lc === '📋 list') {
       if (listCallback) listCallback().catch((err) => logger.error('List error', { error: err.message }));
       return;
     }
 
     // ── 3. Other keywords — checked BEFORE answer collectors so they always work
-    if (['start', 'begin', "let's roll"].includes(lc)) {
+    if (['start', 'begin', "let's roll", '🚀 start'].includes(lc)) {
       await handleStart();
       return;
     }
@@ -730,7 +744,7 @@ function setupWebhookHandlers(app) {
       await handleExit(chatId);
       return;
     }
-    if (lc === 'reschedule') {
+    if (lc === 'reschedule' || lc === '🔄 reschedule') {
       if (rescheduleCallback) rescheduleCallback().catch((err) => logger.error('Reschedule error', { error: err.message }));
       return;
     }
@@ -810,6 +824,7 @@ export {
   registerListCallback,
   registerResetFlowCallback,
   showDateTimePicker,
+  showMainMenu,
   setupWebhookHandlers,
   setWebhook,
   registerBotCommands,

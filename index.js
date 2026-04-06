@@ -9,6 +9,7 @@ import { startAllJobs, stopAllJobs } from './src/scheduler/jobs.js';
 import {
   setWebhook,
   sendMessage,
+  showMainMenu,
   registerAutoFlowCallback,
   registerRescheduleCallback,
   registerListCallback,
@@ -63,11 +64,7 @@ async function main() {
   const topics = dbAll("SELECT * FROM topics WHERE status = 'pending' LIMIT 1");
   const winnerPatterns = dbAll('SELECT * FROM winner_patterns LIMIT 1');
 
-  sendMessage(
-    `👋 *Facebook AI Agent started!*\n\n` +
-    `Just send me *any message* here and I'll generate post ideas straight from your page context — no topic needed.\n\n` +
-    `Or use \`/start\` at any time to kick off a new content flow.`
-  ).catch(() => {});
+  showMainMenu('👋 *Facebook AI Agent is live!* Tap a button below to get started.').catch(() => {});
 
   // Graceful shutdown
   function shutdown(signal) {
