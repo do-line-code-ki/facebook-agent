@@ -7,6 +7,7 @@ import {
   removeAnswerCollector,
   sendMessage,
   showDateTimePicker,
+  escapeMd,
 } from '../services/telegram.js';
 import * as facebook from '../services/facebook.js';
 import { getOptimalTime } from '../agents/scheduleAgent.js';
@@ -56,7 +57,7 @@ function buildApprovalCallbacks(draftId) {
         await publishFlow(draftId, chosenTime);
       } catch (err) {
         logger.error('Publish flow failed', { draftId, error: err.message });
-        await sendMessage(`❌ *Publish failed for draft #${draftId}:* ${err.message}`);
+        await sendMessage(`❌ *Publish failed for draft #${draftId}:* ${escapeMd(err.message)}`);
       }
     },
     onRevise: async (feedback) => {
@@ -65,7 +66,7 @@ function buildApprovalCallbacks(draftId) {
         registerApprovalCallback(String(newDraftId), buildApprovalCallbacks(newDraftId));
       } catch (err) {
         logger.error('Revision failed', { draftId, error: err.message });
-        await sendMessage(`❌ *Revision failed for draft #${draftId}:* ${err.message}`);
+        await sendMessage(`❌ *Revision failed for draft #${draftId}:* ${escapeMd(err.message)}`);
       }
     },
     onReject: async (reason) => {
@@ -161,7 +162,7 @@ async function startContentFlow(topic) {
     logger.info('Content flow complete — waiting for approval', { draftId, topic });
   } catch (err) {
     logger.error('Content flow failed', { topic, error: err.message });
-    sendMessage(`❌ *Content flow failed for "${topic}":* ${err.message}`).catch(() => {});
+    sendMessage(`❌ *Content flow failed for "${escapeMd(topic)}":* ${escapeMd(err.message)}`).catch(() => {});
     throw err;
   }
 }
@@ -260,7 +261,7 @@ async function startAutoFlow() {
     logger.info('Auto flow complete — waiting for approval', { draftId });
   } catch (err) {
     logger.error('Auto content flow failed', { error: err.message });
-    sendMessage(`❌ *Content flow failed:* ${err.message}`).catch(() => {});
+    sendMessage(`❌ *Content flow failed:* ${escapeMd(err.message)}`).catch(() => {});
     throw err;
   } finally {
     isAutoFlowRunning = false;

@@ -39,6 +39,14 @@ function getBot() {
   return bot;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Escapes Telegram Markdown v1 special characters in untrusted strings
+// (error messages, user content, API responses)
+function escapeMd(text) {
+  return String(text).replace(/[_*`\[]/g, '\\$&');
+}
+
 // ─── Basic send helpers ───────────────────────────────────────────────────────
 async function sendMessage(text, extra = {}) {
   try {
@@ -827,6 +835,7 @@ export {
   registerResetFlowCallback,
   showDateTimePicker,
   showMainMenu,
+  escapeMd,
   setupWebhookHandlers,
   setWebhook,
   registerBotCommands,
