@@ -9,16 +9,11 @@ function buildImageUrl(prompt) {
   return { url, seed };
 }
 
-// Fetches the image to force Pollinations to generate + cache it.
-// Returns the same URL (Pollinations serves cached result on subsequent fetches with same seed).
-async function warmImage(url) {
-  try {
-    await axios.get(url, { responseType: 'arraybuffer', timeout: 45000 });
-    return { success: true };
-  } catch (err) {
-    logger.warn('Image warm-up fetch failed', { error: err.message });
-    return { success: false, error: err.message };
-  }
+// Downloads the image from Pollinations and returns it as a Buffer.
+// Throws on failure so callers can handle it.
+async function downloadImage(url) {
+  const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
+  return Buffer.from(response.data);
 }
 
-export { buildImageUrl, warmImage };
+export { buildImageUrl, downloadImage };

@@ -55,7 +55,9 @@ function buildApprovalCallbacks(draftId) {
     onApprove: async () => {
       try {
         // Ask for image first, then schedule
+        logger.info('onApprove: showing image picker', { draftId });
         const imageUrl = await showImagePicker(draftId);
+        logger.info('onApprove: image picker resolved', { draftId, hasImage: !!imageUrl });
         if (imageUrl) {
           dbRun('UPDATE post_drafts SET image_url = ? WHERE id = ?', [imageUrl, draftId]);
         }

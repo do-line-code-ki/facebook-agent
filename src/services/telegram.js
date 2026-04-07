@@ -3,7 +3,7 @@ import config from '../config.js';
 import logger from '../logger.js';
 import { dbGet, dbRun } from '../db/index.js';
 import * as facebook from './facebook.js';
-import { buildImageUrl, warmImage } from './imageGen.js';
+import { buildImageUrl, downloadImage } from './imageGen.js';
 import { generateImagePrompt } from './claude.js';
 
 let bot = null;
@@ -398,6 +398,7 @@ async function showDateTimePicker(optimalTime) {
 // ─── Image picker ─────────────────────────────────────────────────────────────
 
 async function showImagePicker(draftId) {
+  logger.info('showImagePicker: showing prompt', { draftId });
   return new Promise(async (resolve, reject) => {
     const chatId = String(config.TELEGRAM_CHAT_ID);
     try {
@@ -408,12 +409,18 @@ async function showImagePicker(draftId) {
           { text: '📝 Skip — Text Only', callback_data: 'img:skip' },
         ]]},
       });
-    } catch (err) { reject(err); return; }
+    } catch (err) {
+      logger.error('showImagePicker: sendMessage failed', { error: err.message });
+      reject(err);
+      return;
+    }
 
+    logger.info('showImagePicker: message sent, waiting for user response');
     const state = { draftId: String(draftId), resolve, reject, timeout: null, currentUrl: null };
     state.timeout = setTimeout(() => {
+      logger.info('showImagePicker: timed out, resolving with null');
       imagePickerSessions.delete(chatId);
-      resolve(null); // timeout = no image
+      resolve(null);
     }, 5 * 60 * 1000);
 
     imagePickerSessions.set(chatId, state);
@@ -435,6 +442,12 @@ function setupWebhookHandlers(app) {
 
   // ── Inline-keyboard callbacks (date picker + session delete confirm) ──────
   b.on('callback_query', async (query) => {
+    // Filter stale callback_queries from before this process started (polling mode)
+    if (query.message?.date && query.message.date < BOT_START_TIME) {
+      b.answerCallbackQuery(query.id).catch(() => {});
+      return;
+    }
+
     const chatId    = String(query.message?.chat?.id);
     const data      = query.data || '';
     const messageId = query.message?.message_id;
@@ -529,11 +542,13 @@ function setupWebhookHandlers(app) {
           const prompt = await generateImagePrompt(draft?.caption, draft?.post_type);
           const { url } = buildImageUrl(prompt);
           state.currentUrl = url;
+          logger.info('Downloading generated image', { url });
 
-          // Warm the image (forces Pollinations to generate + cache it)
-          await warmImage(url);
+          // Download image as buffer so Telegram doesn't need to fetch the URL itself
+          const imageBuffer = await downloadImage(url);
+          logger.info('Image downloaded, sending to Telegram', { bytes: imageBuffer.length });
 
-          await b.sendPhoto(chatId, url, {
+          await b.sendPhoto(chatId, imageBuffer, {
             caption: `🖼 *Generated image*\n\n_Prompt: ${escapeMd(prompt)}_`,
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [[
