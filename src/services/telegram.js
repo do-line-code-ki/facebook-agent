@@ -782,7 +782,7 @@ function setupWebhookHandlers(app) {
 
 async function setWebhook(webhookUrl) {
   try {
-    await getBot().setWebHook(`${webhookUrl}/telegram/webhook`);
+    await getBot().setWebHook(`${webhookUrl.replace(/\/$/, '')}/telegram/webhook`);
     logger.info('Telegram webhook set', { url: `${webhookUrl}/telegram/webhook` });
   } catch (err) {
     logger.error('Failed to set Telegram webhook', { error: err.message });
