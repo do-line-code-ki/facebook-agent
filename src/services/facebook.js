@@ -198,6 +198,24 @@ async function reschedulePost(facebookPostId, newTimeIso) {
   }
 }
 
+async function publishPhotoPost(caption, imageUrl, scheduledTime = null) {
+  const data = { url: imageUrl, caption };
+
+  if (scheduledTime) {
+    const unixTime = Math.floor(new Date(scheduledTime).getTime() / 1000);
+    const nowPlus10 = Math.floor(Date.now() / 1000) + 600;
+    const nowPlus30Days = Math.floor(Date.now() / 1000) + 30 * 24 * 3600;
+    if (unixTime > nowPlus10 && unixTime < nowPlus30Days) {
+      data.published = false;
+      data.scheduled_publish_time = unixTime;
+    }
+  }
+
+  const result = await fbRequest('post', `/${PAGE_ID}/photos`, {}, data);
+  logger.info('Facebook photo post published', { post_id: result.id, scheduled: !!scheduledTime });
+  return { success: true, post_id: result.id };
+}
+
 async function getScheduledPosts() {
   try {
     const result = await fbRequest('get', `/${PAGE_ID}/scheduled_posts`, {
@@ -258,7 +276,7 @@ async function updatePost(postId, { message, scheduledTime } = {}) {
 }
 
 export {
-  publishPost, getPostMetrics, getPageInsights, getPostComments,
+  publishPost, publishPhotoPost, getPostMetrics, getPageInsights, getPostComments,
   replyToComment, reschedulePost,
   getScheduledPosts, getPublishedPosts, deletePost, updatePost,
 };

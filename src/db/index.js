@@ -25,6 +25,9 @@ function initDb() {
     const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
     db.exec(schema);
 
+    // Migrations — safe to re-run (errors = column already exists)
+    try { db.exec('ALTER TABLE post_drafts ADD COLUMN image_url TEXT'); } catch {}
+
     logger.info('Database initialized', { path: config.DB_PATH });
   } catch (err) {
     logger.error('Failed to initialize database', { error: err.message });

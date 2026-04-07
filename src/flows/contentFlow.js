@@ -7,6 +7,7 @@ import {
   removeAnswerCollector,
   sendMessage,
   showDateTimePicker,
+  showImagePicker,
   escapeMd,
 } from '../services/telegram.js';
 import * as facebook from '../services/facebook.js';
@@ -53,6 +54,11 @@ function buildApprovalCallbacks(draftId) {
   return {
     onApprove: async () => {
       try {
+        // Ask for image first, then schedule
+        const imageUrl = await showImagePicker(draftId);
+        if (imageUrl) {
+          dbRun('UPDATE post_drafts SET image_url = ? WHERE id = ?', [imageUrl, draftId]);
+        }
         const chosenTime = await askForPublishTime(draftId);
         await publishFlow(draftId, chosenTime);
       } catch (err) {
@@ -105,7 +111,10 @@ async function publishFlow(draftId, overrideTime = null) {
 
   const publishTime = overrideTime || draft.optimal_time;
 
-  const result = await facebook.publishPost(fullCaption, publishTime);
+  // Use photo post if an image was selected
+  const result = draft.image_url
+    ? await facebook.publishPhotoPost(fullCaption, draft.image_url, publishTime)
+    : await facebook.publishPost(fullCaption, publishTime);
 
   dbRun(
     `INSERT INTO published_posts (draft_id, facebook_post_id, caption_snapshot, post_type, topic)

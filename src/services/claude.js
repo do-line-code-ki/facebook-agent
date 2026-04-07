@@ -184,6 +184,29 @@ Format as clean markdown. Be concise and data-driven.`;
   return callClaude(systemPrompt, userPrompt);
 }
 
+async function generateImagePrompt(caption, postType) {
+  const systemPrompt = `You are an expert at writing image generation prompts for Stable Diffusion / FLUX.
+Write prompts that produce professional, photorealistic images suitable for a Facebook business page.
+Never include text, watermarks, or logos in the description.`;
+
+  const userPrompt = `Write a single image generation prompt (max 80 words) for this Facebook post.
+
+Post type: ${postType || 'general'}
+Caption: ${caption || 'professional business content'}
+
+Requirements:
+- Photorealistic style
+- No text or words in the image
+- Professional lighting and composition
+- Relevant to the post topic
+- High quality, suitable for a business page
+
+Return ONLY the prompt text, nothing else.`;
+
+  const result = await callClaude(systemPrompt, userPrompt);
+  return result.trim();
+}
+
 export {
   generateIdeasFromContext,
   generatePostIdeas,
@@ -193,4 +216,5 @@ export {
   analyzePostPerformance,
   analyzeCommentSentiment,
   generateWeeklyReport,
+  generateImagePrompt,
 };

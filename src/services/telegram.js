@@ -3,6 +3,8 @@ import config from '../config.js';
 import logger from '../logger.js';
 import { dbGet, dbRun } from '../db/index.js';
 import * as facebook from './facebook.js';
+import { buildImageUrl, warmImage } from './imageGen.js';
+import { generateImagePrompt } from './claude.js';
 
 let bot = null;
 
@@ -14,6 +16,7 @@ const approvalCallbacks = new Map(); // draftId → { onApprove, onRevise, onRej
 const answerCollectors  = new Map(); // chatId  → resolve fn
 const pickerSessions    = new Map(); // chatId  → date-picker state
 const postEditSessions  = new Map(); // chatId  → { fbPostId, draftId, currentCaption, currentTime, newCaption }
+const imagePickerSessions = new Map(); // chatId → { draftId, resolve, reject, timeout, currentUrl }
 
 // ─── Session state ────────────────────────────────────────────────────────────
 const session = { isPaused: false };
@@ -392,6 +395,31 @@ async function showDateTimePicker(optimalTime) {
   });
 }
 
+// ─── Image picker ─────────────────────────────────────────────────────────────
+
+async function showImagePicker(draftId) {
+  return new Promise(async (resolve, reject) => {
+    const chatId = String(config.TELEGRAM_CHAT_ID);
+    try {
+      await getBot().sendMessage(chatId, '🖼 *Add an AI-generated image to this post?*', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[
+          { text: '✨ Generate Image',  callback_data: 'img:gen'  },
+          { text: '📝 Skip — Text Only', callback_data: 'img:skip' },
+        ]]},
+      });
+    } catch (err) { reject(err); return; }
+
+    const state = { draftId: String(draftId), resolve, reject, timeout: null, currentUrl: null };
+    state.timeout = setTimeout(() => {
+      imagePickerSessions.delete(chatId);
+      resolve(null); // timeout = no image
+    }, 5 * 60 * 1000);
+
+    imagePickerSessions.set(chatId, state);
+  });
+}
+
 // ─── Webhook / event handlers ─────────────────────────────────────────────────
 
 function setupWebhookHandlers(app) {
@@ -470,6 +498,73 @@ function setupWebhookHandlers(app) {
           ]]},
         }).catch(() => {});
       }
+      return;
+    }
+
+    // AI image picker
+    if (data.startsWith('img:')) {
+      const action = data.split(':')[1]; // gen | skip | use | retry
+      const state  = imagePickerSessions.get(chatId);
+
+      if (action === 'skip') {
+        answer();
+        await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
+        if (state) {
+          clearTimeout(state.timeout);
+          imagePickerSessions.delete(chatId);
+          state.resolve(null);
+        }
+        return;
+      }
+
+      if (!state) { answer('Session expired. Please try again.', true); return; }
+
+      if (action === 'gen' || action === 'retry') {
+        answer();
+        await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
+        await sendMessage('🎨 Generating image… this takes 15–30 seconds, please wait.');
+
+        try {
+          const draft = dbGet('SELECT * FROM post_drafts WHERE id = ?', [state.draftId]);
+          const prompt = await generateImagePrompt(draft?.caption, draft?.post_type);
+          const { url } = buildImageUrl(prompt);
+          state.currentUrl = url;
+
+          // Warm the image (forces Pollinations to generate + cache it)
+          await warmImage(url);
+
+          await b.sendPhoto(chatId, url, {
+            caption: `🖼 *Generated image*\n\n_Prompt: ${escapeMd(prompt)}_`,
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[
+              { text: '✅ Use this image',  callback_data: 'img:use'   },
+              { text: '🔄 Generate another', callback_data: 'img:retry' },
+              { text: '📝 Skip',            callback_data: 'img:skip'  },
+            ]]},
+          });
+        } catch (err) {
+          logger.error('Image generation failed', { error: err.message });
+          await sendMessage(`⚠️ Image generation failed: ${escapeMd(err.message)}\n\nTry again or skip.`, {
+            reply_markup: { inline_keyboard: [[
+              { text: '🔄 Try again', callback_data: 'img:retry' },
+              { text: '📝 Skip',      callback_data: 'img:skip'  },
+            ]]},
+          });
+        }
+        return;
+      }
+
+      if (action === 'use') {
+        answer();
+        await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
+        clearTimeout(state.timeout);
+        imagePickerSessions.delete(chatId);
+        await sendMessage('✅ *Image added to your post!*');
+        state.resolve(state.currentUrl);
+        return;
+      }
+
+      answer();
       return;
     }
 
@@ -834,6 +929,7 @@ export {
   registerListCallback,
   registerResetFlowCallback,
   showDateTimePicker,
+  showImagePicker,
   showMainMenu,
   escapeMd,
   setupWebhookHandlers,
