@@ -24,6 +24,9 @@ const config = Object.freeze({
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   FACEBOOK_PAGE_ID: process.env.FACEBOOK_PAGE_ID,
   FACEBOOK_PAGE_ACCESS_TOKEN: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
+  // Optional — required only for the multi-page OAuth flow (/addpage command)
+  FACEBOOK_APP_ID: process.env.FACEBOOK_APP_ID || '',
+  FACEBOOK_APP_SECRET: process.env.FACEBOOK_APP_SECRET || '',
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
   PORT: parseInt(process.env.PORT || '3000', 10),

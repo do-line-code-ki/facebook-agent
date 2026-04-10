@@ -5,6 +5,7 @@ import { dbGet, dbRun } from '../db/index.js';
 import * as facebook from './facebook.js';
 import { buildImageUrl, downloadImage } from './imageGen.js';
 import { generateImagePrompt } from './claude.js';
+import { getFacebookOAuthUrl } from '../routes/facebookAuth.js';
 
 let bot = null;
 
@@ -62,8 +63,9 @@ async function sendMessage(text, extra = {}) {
 
 const MAIN_MENU = {
   keyboard: [
-    [{ text: '🚀 Start' }, { text: '📋 List'       }],
+    [{ text: '🚀 Start' },    { text: '📋 List'          }],
     [{ text: '🔄 Reschedule' }, { text: '📖 fb-commands' }],
+    [{ text: '📱 Pages' }],
   ],
   resize_keyboard: true,
   persistent: true,
@@ -243,6 +245,111 @@ async function sendFbCommands() {
     `📋 *list*\n   See all scheduled & published posts\n\n` +
     `📖 *fb-commands*\n   Show this help (never interrupts your session)`
   );
+}
+
+// ─── Facebook page management ─────────────────────────────────────────────────
+
+async function handleAddPage() {
+  let oauthUrl;
+  try {
+    oauthUrl = getFacebookOAuthUrl();
+  } catch (err) {
+    await sendMessage(
+      `⚠️ *Cannot open Facebook login*\n\n${escapeMd(err.message)}\n\n` +
+      `To enable multi-page support, set these two environment variables in Railway:\n` +
+      `• \`FACEBOOK_APP_ID\`\n• \`FACEBOOK_APP_SECRET\`\n\n` +
+      `See the setup guide: go to *developers.facebook.com* → My Apps → Create App → Add Facebook Login product.`
+    );
+    return;
+  }
+
+  const b = getBot();
+  await b.sendMessage(config.TELEGRAM_CHAT_ID,
+    '🔗 *Connect a Facebook Page*\n\n' +
+    'Tap the button below to log in with Facebook and choose which page(s) to connect.\n\n' +
+    '_The link expires in 15 minutes._',
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🔗 Log in with Facebook', url: oauthUrl },
+        ]],
+      },
+    }
+  ).catch((err) => logger.error('handleAddPage sendMessage failed', { error: err.message }));
+}
+
+async function handlePagesList() {
+  const pages = facebook.getAllPages();
+
+  if (pages.length === 0) {
+    await sendMessage(
+      '📱 *No Facebook Pages connected yet.*\n\n' +
+      'Run *addpage* to connect a page via Facebook Login.'
+    );
+    return;
+  }
+
+  const { name: activeName } = facebook.getActivePage();
+  const b = getBot();
+
+  const buttons = pages.map((p) => [{
+    text: p.is_active
+      ? `✅ ${p.page_name} (active)`
+      : `📄 ${p.page_name}`,
+    callback_data: p.is_active ? 'page:noop' : `page:switch:${p.page_id}`,
+  }]);
+
+  buttons.push([{ text: '➕ Add another page', callback_data: 'page:addnew' }]);
+
+  await b.sendMessage(config.TELEGRAM_CHAT_ID,
+    `📱 *Your Facebook Pages*\n\nCurrently active: *${escapeMd(activeName)}*\n\nTap a page to make it active:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons },
+    }
+  ).catch((err) => logger.error('handlePagesList sendMessage failed', { error: err.message }));
+}
+
+// Called by facebookAuth.js (via registered notifier) when OAuth completes
+async function handlePagesConnected(pages, status, errMsg) {
+  const b = getBot();
+
+  if (status === 'denied') {
+    await sendMessage('❌ Facebook login was cancelled. Tap *addpage* if you\'d like to try again.');
+    return;
+  }
+  if (status === 'no_pages') {
+    await sendMessage('⚠️ No Facebook Pages found on that account. You must be an Admin of a page to connect it.');
+    return;
+  }
+  if (status === 'error') {
+    await sendMessage(`❌ *Failed to connect pages:* ${escapeMd(errMsg || 'Unknown error')}\n\nPlease try *addpage* again.`);
+    return;
+  }
+
+  // Auto-select if only one page was returned and no page is currently active
+  const allPages = facebook.getAllPages();
+  const hasActive = allPages.some((p) => p.is_active);
+  if (pages.length === 1 && !hasActive) {
+    facebook.setActivePage(pages[0].id);
+    await sendMessage(`✅ *${escapeMd(pages[0].name)}* is now connected and active!`);
+    return;
+  }
+
+  // Show selector for all newly connected pages
+  const buttons = pages.map((p) => [{
+    text: `📄 ${p.name}`,
+    callback_data: `page:switch:${p.id}`,
+  }]);
+
+  await b.sendMessage(config.TELEGRAM_CHAT_ID,
+    `✅ *${pages.length} page${pages.length > 1 ? 's' : ''} connected!*\n\nChoose which one to make active:`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: buttons },
+    }
+  ).catch((err) => logger.error('handlePagesConnected sendMessage failed', { error: err.message }));
 }
 
 // ─── Date-time picker ─────────────────────────────────────────────────────────
@@ -583,6 +690,42 @@ function setupWebhookHandlers(app) {
       return;
     }
 
+    // Facebook page management
+    if (data.startsWith('page:')) {
+      const parts  = data.split(':');
+      const action = parts[1];
+
+      if (action === 'noop') { answer(); return; }
+
+      if (action === 'addnew') {
+        answer();
+        await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
+        await handleAddPage();
+        return;
+      }
+
+      if (action === 'switch') {
+        const targetPageId = parts.slice(2).join(':');
+        answer();
+        try {
+          facebook.setActivePage(targetPageId);
+          const { name } = facebook.getActivePage();
+          await b.editMessageText(
+            `✅ *Switched to: ${escapeMd(name)}*\n\nAll future posts will go to this page.`,
+            { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }
+          ).catch(() => {});
+          await showMainMenu(`📱 Active page: *${escapeMd(name)}*`);
+        } catch (err) {
+          logger.error('Page switch failed', { targetPageId, error: err.message });
+          await sendMessage(`❌ Failed to switch page: ${escapeMd(err.message)}`);
+        }
+        return;
+      }
+
+      answer();
+      return;
+    }
+
     // Post management actions (list command buttons)
     if (data.startsWith('post:')) {
       const parts   = data.split(':');
@@ -866,6 +1009,14 @@ function setupWebhookHandlers(app) {
       if (rescheduleCallback) rescheduleCallback().catch((err) => logger.error('Reschedule error', { error: err.message }));
       return;
     }
+    if (lc === 'addpage' || lc === '/addpage') {
+      await handleAddPage();
+      return;
+    }
+    if (lc === '📱 pages') {
+      await handlePagesList();
+      return;
+    }
 
     // ── 4. If paused, swallow everything else ────────────────────────────────
     if (session.isPaused) {
@@ -950,4 +1101,5 @@ export {
   setupWebhookHandlers,
   setWebhook,
   registerBotCommands,
+  handlePagesConnected,
 };

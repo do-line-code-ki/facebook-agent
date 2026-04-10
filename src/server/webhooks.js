@@ -1,5 +1,6 @@
 import express from 'express';
 import { setupWebhookHandlers } from '../services/telegram.js';
+import { setupFacebookAuthRoutes } from '../routes/facebookAuth.js';
 import { dbRun, dbAll } from '../db/index.js';
 import { startContentFlow } from '../flows/contentFlow.js';
 import logger from '../logger.js';
@@ -10,6 +11,9 @@ function setupWebhooks(app) {
 
   // Setup Telegram webhook handlers (registers /telegram/webhook POST route)
   setupWebhookHandlers(app);
+
+  // Facebook OAuth callback (registers /auth/facebook/callback GET route)
+  setupFacebookAuthRoutes(app);
 
   // Meta webhook verification
   app.get('/meta/webhook', (req, res) => {
@@ -113,6 +117,7 @@ function setupWebhooks(app) {
   logger.info('Webhooks registered', {
     routes: [
       'POST /telegram/webhook',
+      'GET  /auth/facebook/callback',
       'GET /meta/webhook',
       'POST /meta/webhook',
       'POST /agent/topic',

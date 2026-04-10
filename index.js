@@ -15,8 +15,10 @@ import {
   registerListCallback,
   registerResetFlowCallback,
   registerBotCommands,
+  handlePagesConnected,
 } from './src/services/telegram.js';
 import { startAutoFlow, handleReschedule, handleList, resetAutoFlow } from './src/flows/contentFlow.js';
+import { registerOAuthNotifier } from './src/routes/facebookAuth.js';
 import config from './src/config.js';
 
 // Ensure data directory exists
@@ -34,6 +36,7 @@ async function main() {
   registerRescheduleCallback(handleReschedule);
   registerListCallback(handleList);
   registerResetFlowCallback(resetAutoFlow);
+  registerOAuthNotifier(handlePagesConnected);
 
   // 3. Create Express app and register all routes
   const app = express();

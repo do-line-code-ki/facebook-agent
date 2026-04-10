@@ -1,14 +1,51 @@
 import axios from 'axios';
 import config from '../config.js';
 import logger from '../logger.js';
+import { dbGet, dbAll, dbRun } from '../db/index.js';
 
 const BASE_URL = config.FACEBOOK_API_BASE;
-const PAGE_ID = config.FACEBOOK_PAGE_ID;
-const ACCESS_TOKEN = config.FACEBOOK_PAGE_ACCESS_TOKEN;
+
+// ─── Active page helpers ──────────────────────────────────────────────────────
+
+/** Returns the currently active page's credentials, falling back to env vars. */
+function getActivePage() {
+  try {
+    const page = dbGet('SELECT * FROM facebook_pages WHERE is_active = 1');
+    if (page) {
+      return { pageId: page.page_id, token: page.access_token, name: page.page_name };
+    }
+  } catch {
+    // DB not ready yet (startup) — fall through to env vars
+  }
+  return {
+    pageId: config.FACEBOOK_PAGE_ID,
+    token:  config.FACEBOOK_PAGE_ACCESS_TOKEN,
+    name:   'Default Page',
+  };
+}
+
+/** Returns all saved pages from DB. */
+function getAllPages() {
+  try {
+    return dbAll('SELECT page_id, page_name, is_active FROM facebook_pages ORDER BY is_active DESC, page_name ASC');
+  } catch {
+    return [];
+  }
+}
+
+/** Switches the active page. */
+function setActivePage(pageId) {
+  dbRun('UPDATE facebook_pages SET is_active = 0');
+  dbRun('UPDATE facebook_pages SET is_active = 1 WHERE page_id = ?', [pageId]);
+  logger.info('Active Facebook page switched', { pageId });
+}
+
+// ─── Core request helper ──────────────────────────────────────────────────────
 
 async function fbRequest(method, endpoint, params = {}, data = {}, retryCount = 0) {
+  const { token } = getActivePage();
   const url = `${BASE_URL}${endpoint}`;
-  const requestParams = { access_token: ACCESS_TOKEN, ...params };
+  const requestParams = { access_token: token, ...params };
 
   try {
     logger.debug(`Facebook API ${method.toUpperCase()} ${endpoint}`);
@@ -45,6 +82,7 @@ async function fbRequest(method, endpoint, params = {}, data = {}, retryCount = 
 }
 
 async function publishPost(caption, scheduledTime = null) {
+  const { pageId } = getActivePage();
   const data = { message: caption };
 
   if (scheduledTime) {
@@ -58,7 +96,7 @@ async function publishPost(caption, scheduledTime = null) {
     }
   }
 
-  const result = await fbRequest('post', `/${PAGE_ID}/feed`, {}, data);
+  const result = await fbRequest('post', `/${pageId}/feed`, {}, data);
   logger.info('Facebook post published', { post_id: result.id, scheduled: !!scheduledTime });
   return { success: true, post_id: result.id };
 }
@@ -122,13 +160,14 @@ async function getPostMetrics(facebookPostId) {
 }
 
 async function getPageInsights() {
+  const { pageId } = getActivePage();
   const pageMetrics = ['page_impressions', 'page_reach', 'page_engaged_users'];
 
   let insightsData = {};
   let pageData = {};
 
   try {
-    const result = await fbRequest('get', `/${PAGE_ID}/insights`, {
+    const result = await fbRequest('get', `/${pageId}/insights`, {
       metric: pageMetrics.join(','),
       period: 'days_28',
     });
@@ -143,7 +182,7 @@ async function getPageInsights() {
   }
 
   try {
-    pageData = await fbRequest('get', `/${PAGE_ID}`, {
+    pageData = await fbRequest('get', `/${pageId}`, {
       fields: 'fan_count,talking_about_count',
     });
   } catch (err) {
@@ -199,6 +238,7 @@ async function reschedulePost(facebookPostId, newTimeIso) {
 }
 
 async function publishPhotoPost(caption, imageUrl, scheduledTime = null) {
+  const { pageId } = getActivePage();
   const data = { url: imageUrl, caption };
 
   if (scheduledTime) {
@@ -211,14 +251,15 @@ async function publishPhotoPost(caption, imageUrl, scheduledTime = null) {
     }
   }
 
-  const result = await fbRequest('post', `/${PAGE_ID}/photos`, {}, data);
+  const result = await fbRequest('post', `/${pageId}/photos`, {}, data);
   logger.info('Facebook photo post published', { post_id: result.id, scheduled: !!scheduledTime });
   return { success: true, post_id: result.id };
 }
 
 async function getScheduledPosts() {
+  const { pageId } = getActivePage();
   try {
-    const result = await fbRequest('get', `/${PAGE_ID}/scheduled_posts`, {
+    const result = await fbRequest('get', `/${pageId}/scheduled_posts`, {
       fields: 'id,message,scheduled_publish_time',
       limit: 25,
     });
@@ -230,8 +271,9 @@ async function getScheduledPosts() {
 }
 
 async function getPublishedPosts() {
+  const { pageId } = getActivePage();
   try {
-    const result = await fbRequest('get', `/${PAGE_ID}/posts`, {
+    const result = await fbRequest('get', `/${pageId}/posts`, {
       fields: 'id,message,created_time',
       limit: 25,
     });
@@ -279,4 +321,5 @@ export {
   publishPost, publishPhotoPost, getPostMetrics, getPageInsights, getPostComments,
   replyToComment, reschedulePost,
   getScheduledPosts, getPublishedPosts, deletePost, updatePost,
+  getActivePage, getAllPages, setActivePage,
 };
