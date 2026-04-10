@@ -279,6 +279,77 @@ async function handleAddPage() {
   ).catch((err) => logger.error('handleAddPage sendMessage failed', { error: err.message }));
 }
 
+/** Pick an emoji that fits the page name based on common business keywords. */
+function getPageIcon(name = '') {
+  const n = name.toLowerCase();
+  if (/restaurant|cafe|food|eat|kitchen|cook|chef|bakery|pizza|burger|coffee|dine|bistro|grill|bar|pub|catering|sweet|dessert|juice/.test(n)) return '🍽️';
+  if (/tech|software|app|digital|code|dev|cyber|data|ai |cloud|web|saas|startup|it |iot/.test(n)) return '💻';
+  if (/shop|store|market|buy|sell|retail|boutique|fashion|cloth|wear|outfit|brand|merch/.test(n)) return '🛍️';
+  if (/music|band|song|sing|record|studio|sound|concert|dj |beat|artist|album/.test(n)) return '🎵';
+  if (/art|design|creative|studio|paint|photo|film|gallery|visual|craft|decor|interior/.test(n)) return '🎨';
+  if (/health|fit|gym|sport|yoga|wellness|beauty|salon|spa|medical|clinic|hospital|care|therapy|dental/.test(n)) return '💪';
+  if (/edu|school|college|univer|learn|teach|tutor|academy|training|course|coaching/.test(n)) return '📚';
+  if (/travel|tour|hotel|flight|trip|holiday|vacation|resort|adventure|explore|trek/.test(n)) return '✈️';
+  if (/real.?estate|property|home|house|flat|apart|rent|mortgage|realtor|realty/.test(n)) return '🏠';
+  if (/news|media|blog|journal|press|magazine|publish|broadcast/.test(n)) return '📰';
+  if (/financ|bank|invest|money|fund|wealth|account|tax|loan|insurance/.test(n)) return '💰';
+  if (/auto|car|vehicle|motor|drive|transport|bike|cycle|garage|wheel/.test(n)) return '🚗';
+  if (/pet|dog|cat|animal|vet|groom|paws|furry/.test(n)) return '🐾';
+  if (/kids|child|baby|toy|play|kindergarten|preschool|nursery/.test(n)) return '🧸';
+  if (/game|gaming|esport|console|streamer|twitch|playstation|xbox/.test(n)) return '🎮';
+  if (/law|legal|attorney|lawyer|court|justice|advocate|counsel/.test(n)) return '⚖️';
+  if (/church|temple|mosque|mand|gurudu|religion|spiritual|faith|prayer/.test(n)) return '🙏';
+  if (/nonprofit|charity|ngo|foundation|volunteer|welfare|trust|social/.test(n)) return '❤️';
+  if (/farm|agri|organic|garden|plant|flower|nature|eco|green|sustain/.test(n)) return '🌿';
+  if (/event|wedding|party|catering|occasion|plan|ceremony|celebrate/.test(n)) return '🎉';
+  return '📄';
+}
+
+/** Build the main pages grid keyboard (2 columns). */
+function buildPagesKeyboard(pages) {
+  const rows = [];
+
+  for (let i = 0; i < pages.length; i += 2) {
+    const row = [];
+    const addBtn = (p) => {
+      const icon = getPageIcon(p.page_name);
+      row.push({
+        text: p.is_active ? `✅ ${icon} ${p.page_name}` : `${icon} ${p.page_name}`,
+        callback_data: p.is_active ? 'page:noop' : `page:switch:${p.page_id}`,
+      });
+    };
+    addBtn(pages[i]);
+    if (pages[i + 1]) addBtn(pages[i + 1]);
+    rows.push(row);
+  }
+
+  rows.push([
+    { text: '➕ Add page',    callback_data: 'page:addnew'    },
+    { text: '🗑️ Remove page', callback_data: 'page:removemenu' },
+  ]);
+
+  return { inline_keyboard: rows };
+}
+
+/** Build the "select page to remove" grid keyboard (2 columns). */
+function buildDeleteKeyboard(pages) {
+  const rows = [];
+
+  for (let i = 0; i < pages.length; i += 2) {
+    const row = [];
+    const p1 = pages[i];
+    row.push({ text: `🗑️ ${p1.page_name}`, callback_data: `page:delete:${p1.page_id}` });
+    if (pages[i + 1]) {
+      const p2 = pages[i + 1];
+      row.push({ text: `🗑️ ${p2.page_name}`, callback_data: `page:delete:${p2.page_id}` });
+    }
+    rows.push(row);
+  }
+
+  rows.push([{ text: '← Back', callback_data: 'page:list' }]);
+  return { inline_keyboard: rows };
+}
+
 async function handlePagesList() {
   const pages = facebook.getAllPages();
 
@@ -291,23 +362,11 @@ async function handlePagesList() {
   }
 
   const { name: activeName } = facebook.getActivePage();
-  const b = getBot();
 
-  const buttons = pages.map((p) => [{
-    text: p.is_active
-      ? `✅ ${p.page_name} (active)`
-      : `📄 ${p.page_name}`,
-    callback_data: p.is_active ? 'page:noop' : `page:switch:${p.page_id}`,
-  }]);
-
-  buttons.push([{ text: '➕ Add another page', callback_data: 'page:addnew' }]);
-
-  await b.sendMessage(config.TELEGRAM_CHAT_ID,
-    `📱 *Your Facebook Pages*\n\nCurrently active: *${escapeMd(activeName)}*\n\nTap a page to make it active:`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: buttons },
-    }
+  await getBot().sendMessage(
+    config.TELEGRAM_CHAT_ID,
+    `📱 *Your Facebook Pages*\n\nActive: *${escapeMd(activeName)}*\n\nTap a page to switch · Remove to unlink:`,
+    { parse_mode: 'Markdown', reply_markup: buildPagesKeyboard(pages) }
   ).catch((err) => logger.error('handlePagesList sendMessage failed', { error: err.message }));
 }
 
@@ -337,18 +396,22 @@ async function handlePagesConnected(pages, status, errMsg) {
     return;
   }
 
-  // Show selector for all newly connected pages
-  const buttons = pages.map((p) => [{
-    text: `📄 ${p.name}`,
-    callback_data: `page:switch:${p.id}`,
-  }]);
+  // Show grid selector for all newly connected pages
+  const rows = [];
+  for (let i = 0; i < pages.length; i += 2) {
+    const row = [];
+    const mkBtn = (p) => ({
+      text: `${getPageIcon(p.name)} ${p.name}`,
+      callback_data: `page:switch:${p.id}`,
+    });
+    row.push(mkBtn(pages[i]));
+    if (pages[i + 1]) row.push(mkBtn(pages[i + 1]));
+    rows.push(row);
+  }
 
   await b.sendMessage(config.TELEGRAM_CHAT_ID,
     `✅ *${pages.length} page${pages.length > 1 ? 's' : ''} connected!*\n\nChoose which one to make active:`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: buttons },
-    }
+    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } }
   ).catch((err) => logger.error('handlePagesConnected sendMessage failed', { error: err.message }));
 }
 
@@ -697,6 +760,25 @@ function setupWebhookHandlers(app) {
 
       if (action === 'noop') { answer(); return; }
 
+      // ── Re-render the main pages grid (used by "← Back" and after delete) ──
+      if (action === 'list') {
+        answer();
+        const pages = facebook.getAllPages();
+        if (pages.length === 0) {
+          await b.editMessageText(
+            '📱 *No pages connected.*\n\nUse *addpage* to connect a Facebook Page.',
+            { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: [] } }
+          ).catch(() => {});
+        } else {
+          const { name: activeName } = facebook.getActivePage();
+          await b.editMessageText(
+            `📱 *Your Facebook Pages*\n\nActive: *${escapeMd(activeName)}*\n\nTap a page to switch · Remove to unlink:`,
+            { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: buildPagesKeyboard(pages) }
+          ).catch(() => {});
+        }
+        return;
+      }
+
       if (action === 'addnew') {
         answer();
         await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId }).catch(() => {});
@@ -710,14 +792,89 @@ function setupWebhookHandlers(app) {
         try {
           facebook.setActivePage(targetPageId);
           const { name } = facebook.getActivePage();
+          const pages = facebook.getAllPages();
           await b.editMessageText(
-            `✅ *Switched to: ${escapeMd(name)}*\n\nAll future posts will go to this page.`,
-            { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' }
+            `📱 *Your Facebook Pages*\n\nActive: *${escapeMd(name)}*\n\nTap a page to switch · Remove to unlink:`,
+            { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: buildPagesKeyboard(pages) }
           ).catch(() => {});
-          await showMainMenu(`📱 Active page: *${escapeMd(name)}*`);
+          await sendMessage(`✅ Switched to *${escapeMd(name)}*`);
         } catch (err) {
-          logger.error('Page switch failed', { targetPageId, error: err.message });
+          logger.error('Page switch failed', { error: err.message });
           await sendMessage(`❌ Failed to switch page: ${escapeMd(err.message)}`);
+        }
+        return;
+      }
+
+      // ── Show "select page to remove" grid ────────────────────────────────────
+      if (action === 'removemenu') {
+        answer();
+        const pages = facebook.getAllPages();
+        await b.editMessageText(
+          '🗑️ *Remove a page*\n\nSelect the page you want to unlink:',
+          { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: buildDeleteKeyboard(pages) }
+        ).catch(() => {});
+        return;
+      }
+
+      // ── Tap page to delete → show confirmation ────────────────────────────────
+      if (action === 'delete') {
+        answer();
+        const targetPageId = parts.slice(2).join(':');
+        const pages = facebook.getAllPages();
+        const target = pages.find((p) => p.page_id === targetPageId);
+        if (!target) {
+          await b.editMessageText('Page not found.', { chat_id: chatId, message_id: messageId }).catch(() => {});
+          return;
+        }
+        const icon = getPageIcon(target.page_name);
+        const activeWarning = target.is_active
+          ? '\n\n⚠️ _This is your currently active page. Removing it will switch to the next available page._'
+          : '';
+        await b.editMessageText(
+          `🗑️ *Remove "${escapeMd(target.page_name)}"?*\n\n` +
+          `${icon} ${escapeMd(target.page_name)} will be unlinked from the bot. ` +
+          `You can re-add it anytime with *addpage*.${activeWarning}`,
+          {
+            chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[
+              { text: '✅ Yes, remove',  callback_data: `page:deleteconfirm:${targetPageId}` },
+              { text: '❌ Cancel',       callback_data: 'page:list' },
+            ]]},
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      // ── Confirmed delete ──────────────────────────────────────────────────────
+      if (action === 'deleteconfirm') {
+        answer();
+        const targetPageId = parts.slice(2).join(':');
+        const pages = facebook.getAllPages();
+        const target = pages.find((p) => p.page_id === targetPageId);
+        const wasActive = target?.is_active === 1;
+        const pageName = target?.page_name || targetPageId;
+
+        dbRun('DELETE FROM facebook_pages WHERE page_id = ?', [targetPageId]);
+        logger.info('Facebook page removed', { pageId: targetPageId, pageName });
+
+        // If deleted page was active, auto-switch to the first remaining page
+        const remaining = facebook.getAllPages();
+        if (wasActive && remaining.length > 0) {
+          facebook.setActivePage(remaining[0].page_id);
+        }
+
+        if (remaining.length === 0) {
+          await b.editMessageText(
+            `✅ *${escapeMd(pageName)}* has been removed.\n\nNo pages connected. Use *addpage* to connect one.`,
+            { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: [] } }
+          ).catch(() => {});
+        } else {
+          const { name: activeName } = facebook.getActivePage();
+          await b.editMessageText(
+            `✅ *${escapeMd(pageName)}* removed.\n\n` +
+            `📱 *Your Facebook Pages*\n\nActive: *${escapeMd(activeName)}*\n\nTap a page to switch · Remove to unlink:`,
+            { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown', reply_markup: buildPagesKeyboard(remaining) }
+          ).catch(() => {});
         }
         return;
       }
