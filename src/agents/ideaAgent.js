@@ -2,24 +2,19 @@ import { dbRun, dbAll, dbGet } from '../db/index.js';
 import * as claude from '../services/claude.js';
 import { sendMessage } from '../services/telegram.js';
 import logger from '../logger.js';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import * as facebook from '../services/facebook.js';
+import { loadContext, getDefaultContext } from '../services/contextManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function getPageContext() {
   try {
-    const ctxPath = path.resolve('page_context.json');
-    return JSON.parse(fs.readFileSync(ctxPath, 'utf-8'));
+    const { name: pageName } = facebook.getActivePage();
+    return loadContext(pageName) || getDefaultContext();
   } catch {
-    return {
-      page_name: 'My Facebook Page',
-      industry: 'General',
-      target_audience: 'General audience',
-      tone_of_voice: 'Professional but friendly',
-      content_pillars: ['Educational', 'Entertaining', 'Promotional'],
-    };
+    return getDefaultContext();
   }
 }
 

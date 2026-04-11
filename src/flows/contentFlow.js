@@ -14,6 +14,8 @@ import * as facebook from '../services/facebook.js';
 import { getOptimalTime } from '../agents/scheduleAgent.js';
 import logger from '../logger.js';
 import config from '../config.js';
+import { loadContext } from '../services/contextManager.js';
+import { runContextFlow } from './contextFlow.js';
 
 function formatTime(isoStr) {
   return new Date(isoStr).toLocaleString('en-IN', {
@@ -222,6 +224,18 @@ async function startAutoFlow() {
   isAutoFlowRunning = true;
 
   try {
+    // ── Ensure a context file exists for the active page ──────────────────
+    let { name: pageName, pageId } = facebook.getActivePage();
+    if (!loadContext(pageName)) {
+      const ctx = await runContextFlow(pageName, pageId);
+      if (!ctx) {
+        // User exited or timed out without saving
+        return;
+      }
+      // Refresh pageName in case it changed (it doesn't, but for clarity)
+      pageName = facebook.getActivePage().name;
+    }
+
     await sendMessage('🚀 *Generating post ideas from your page context...*');
 
     const ideas = await runAutoIdeaAgent();

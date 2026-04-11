@@ -10,16 +10,17 @@ import {
 import { getOptimalTime } from './scheduleAgent.js';
 import logger from '../logger.js';
 import config from '../config.js';
-import fs from 'fs';
-import path from 'path';
+import * as facebook from '../services/facebook.js';
+import { loadContext, getDefaultContext } from '../services/contextManager.js';
 
 const ANSWER_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 function getPageContext() {
   try {
-    return JSON.parse(fs.readFileSync(path.resolve('page_context.json'), 'utf-8'));
+    const { name: pageName } = facebook.getActivePage();
+    return loadContext(pageName) || getDefaultContext();
   } catch {
-    return { page_name: 'My Page', tone_of_voice: 'Professional but friendly' };
+    return getDefaultContext();
   }
 }
 

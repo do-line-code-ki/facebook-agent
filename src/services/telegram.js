@@ -13,11 +13,12 @@ let bot = null;
 const BOT_START_TIME = Math.floor(Date.now() / 1000);
 
 // ─── In-memory stores ─────────────────────────────────────────────────────────
-const approvalCallbacks = new Map(); // draftId → { onApprove, onRevise, onReject }
-const answerCollectors  = new Map(); // chatId  → resolve fn
-const pickerSessions    = new Map(); // chatId  → date-picker state
-const postEditSessions  = new Map(); // chatId  → { fbPostId, draftId, currentCaption, currentTime, newCaption }
-const imagePickerSessions = new Map(); // chatId → { draftId, resolve, reject, timeout, currentUrl }
+const approvalCallbacks   = new Map(); // draftId → { onApprove, onRevise, onReject }
+const answerCollectors    = new Map(); // chatId  → resolve fn
+const pickerSessions      = new Map(); // chatId  → date-picker state
+const postEditSessions    = new Map(); // chatId  → { fbPostId, draftId, currentCaption, currentTime, newCaption }
+const imagePickerSessions = new Map(); // chatId  → { draftId, resolve, reject, timeout, currentUrl }
+const contextSessions     = new Map(); // chatId  → { pageName, questions, answers, messageId, mode, editingKey, resolve, reject, timeout }
 
 // ─── Session state ────────────────────────────────────────────────────────────
 const session = { isPaused: false };
@@ -597,6 +598,67 @@ async function showImagePicker(draftId) {
   });
 }
 
+// ─── Context options picker ───────────────────────────────────────────────────
+
+function buildContextSummaryText(pageName, questions, answers) {
+  const lines = questions.map((q, i) =>
+    `*${i + 1}. ${escapeMd(q.label)}:*\n${escapeMd(answers[q.key] || '—')}`
+  );
+  return `📋 *Context for "${escapeMd(pageName)}"*\n\n${lines.join('\n\n')}`;
+}
+
+function buildEditKeyboard(questions) {
+  const rows = [];
+  for (let i = 0; i < questions.length; i += 2) {
+    const row = [];
+    row.push({ text: `✏️ ${i + 1}. ${questions[i].label}`, callback_data: `ctx:editfield:${i}` });
+    if (questions[i + 1]) {
+      row.push({ text: `✏️ ${i + 2}. ${questions[i + 1].label}`, callback_data: `ctx:editfield:${i + 1}` });
+    }
+    rows.push(row);
+  }
+  rows.push([
+    { text: '💾 Save',  callback_data: 'ctx:editsave'  },
+    { text: '🚪 Exit',  callback_data: 'ctx:exitedit'  },
+  ]);
+  return { inline_keyboard: rows };
+}
+
+async function showContextOptions(pageName, questions, answers) {
+  return new Promise(async (resolve, reject) => {
+    const chatId  = String(config.TELEGRAM_CHAT_ID);
+    const text    = buildContextSummaryText(pageName, questions, answers) + '\n\n_What would you like to do?_';
+    const keyboard = { inline_keyboard: [[
+      { text: '💾 Save',    callback_data: 'ctx:save'   },
+      { text: '✏️ Edit',   callback_data: 'ctx:edit'   },
+      { text: '🗑️ Delete', callback_data: 'ctx:delete' },
+    ]]};
+
+    let msg;
+    try {
+      msg = await getBot().sendMessage(chatId, text, { parse_mode: 'Markdown', reply_markup: keyboard });
+    } catch (err) { reject(err); return; }
+
+    const state = {
+      pageName,
+      questions,
+      answers: { ...answers },
+      messageId: msg.message_id,
+      mode: 'options',
+      editingKey: null,
+      resolve,
+      reject,
+      timeout: null,
+    };
+    state.timeout = setTimeout(() => {
+      contextSessions.delete(chatId);
+      resolve(null);
+    }, 15 * 60 * 1000);
+
+    contextSessions.set(chatId, state);
+  });
+}
+
 // ─── Webhook / event handlers ─────────────────────────────────────────────────
 
 function setupWebhookHandlers(app) {
@@ -746,6 +808,112 @@ function setupWebhookHandlers(app) {
         imagePickerSessions.delete(chatId);
         await sendMessage('✅ *Image added to your post!*');
         state.resolve(state.currentUrl);
+        return;
+      }
+
+      answer();
+      return;
+    }
+
+    // Context options (Save / Edit / Delete after Q&A)
+    if (data.startsWith('ctx:')) {
+      const parts  = data.split(':');
+      const action = parts[1];
+      const ctxState = contextSessions.get(chatId);
+
+      if (!ctxState) { answer('Session expired.', true); return; }
+
+      // ── Save (from options or edit view) ──────────────────────────────────
+      if (action === 'save' || action === 'editsave') {
+        answer();
+        clearTimeout(ctxState.timeout);
+        contextSessions.delete(chatId);
+        await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: ctxState.messageId }).catch(() => {});
+        ctxState.resolve({ action: 'saved', answers: ctxState.answers });
+        return;
+      }
+
+      // ── Delete ────────────────────────────────────────────────────────────
+      if (action === 'delete') {
+        answer();
+        clearTimeout(ctxState.timeout);
+        contextSessions.delete(chatId);
+        await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: ctxState.messageId }).catch(() => {});
+        ctxState.resolve({ action: 'deleted' });
+        return;
+      }
+
+      // ── Switch to edit view ───────────────────────────────────────────────
+      if (action === 'edit') {
+        answer();
+        ctxState.mode = 'edit';
+        const editText = buildContextSummaryText(ctxState.pageName, ctxState.questions, ctxState.answers) +
+          '\n\n_Tap a field to edit it:_';
+        await b.editMessageText(editText, {
+          chat_id: chatId, message_id: ctxState.messageId, parse_mode: 'Markdown',
+          reply_markup: buildEditKeyboard(ctxState.questions),
+        }).catch(() => {});
+        return;
+      }
+
+      // ── Edit a specific field ─────────────────────────────────────────────
+      if (action === 'editfield') {
+        const idx = parseInt(parts[2], 10);
+        const q   = ctxState.questions[idx];
+        if (!q) { answer(); return; }
+        answer();
+        ctxState.editingKey = q.key;
+        ctxState.mode = 'editfield';
+
+        await b.editMessageText(
+          `✏️ *Editing: ${escapeMd(q.label)}*\n\n` +
+          `Current answer: _${escapeMd(ctxState.answers[q.key] || '—')}_\n\n` +
+          `Reply with your new answer:`,
+          {
+            chat_id: chatId, message_id: ctxState.messageId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '❌ Cancel', callback_data: 'ctx:editcancel' }]] },
+          }
+        ).catch(() => {});
+
+        registerAnswerCollector(chatId, async (newValue) => {
+          const s = contextSessions.get(chatId);
+          if (!s) return;
+          s.answers[s.editingKey] = newValue;
+          s.editingKey = null;
+          s.mode = 'edit';
+          const updatedText = buildContextSummaryText(s.pageName, s.questions, s.answers) +
+            '\n\n_Tap a field to edit it:_';
+          await b.editMessageText(updatedText, {
+            chat_id: chatId, message_id: s.messageId, parse_mode: 'Markdown',
+            reply_markup: buildEditKeyboard(s.questions),
+          }).catch(() => {});
+        });
+        return;
+      }
+
+      // ── Cancel field edit → back to edit view ────────────────────────────
+      if (action === 'editcancel') {
+        answer();
+        removeAnswerCollector(chatId);
+        ctxState.editingKey = null;
+        ctxState.mode = 'edit';
+        const editText = buildContextSummaryText(ctxState.pageName, ctxState.questions, ctxState.answers) +
+          '\n\n_Tap a field to edit it:_';
+        await b.editMessageText(editText, {
+          chat_id: chatId, message_id: ctxState.messageId, parse_mode: 'Markdown',
+          reply_markup: buildEditKeyboard(ctxState.questions),
+        }).catch(() => {});
+        return;
+      }
+
+      // ── Exit from edit view (without saving) ─────────────────────────────
+      if (action === 'exitedit') {
+        answer();
+        clearTimeout(ctxState.timeout);
+        contextSessions.delete(chatId);
+        removeAnswerCollector(chatId);
+        await b.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: ctxState.messageId }).catch(() => {});
+        ctxState.resolve(null);
         return;
       }
 
@@ -1253,6 +1421,7 @@ export {
   registerResetFlowCallback,
   showDateTimePicker,
   showImagePicker,
+  showContextOptions,
   showMainMenu,
   escapeMd,
   setupWebhookHandlers,
