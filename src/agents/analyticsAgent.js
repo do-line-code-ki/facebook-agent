@@ -131,9 +131,19 @@ async function updateWinnerPatterns() {
       return;
     }
 
-    // Group by post_type
+    // Group by post_type — join through to post_ideas to get idea_source
+    const winnersFull = dbAll(`
+      SELECT pm.*, pp.caption_snapshot, pp.post_type, pp.published_at, pp.draft_id,
+             pi.idea_source
+      FROM post_metrics pm
+      JOIN published_posts pp ON pm.published_post_id = pp.id
+      LEFT JOIN post_drafts pd ON pp.draft_id = pd.id
+      LEFT JOIN post_ideas  pi ON pd.idea_id  = pi.id
+      WHERE pm.is_winner = 1
+    `);
+
     const byType = {};
-    for (const w of winners) {
+    for (const w of winnersFull) {
       const t = w.post_type || 'unknown';
       if (!byType[t]) byType[t] = [];
       byType[t].push(w);
@@ -142,35 +152,39 @@ async function updateWinnerPatterns() {
     for (const [postType, posts] of Object.entries(byType)) {
       const avgEngagement = posts.reduce((s, p) => s + p.engagement_rate, 0) / posts.length;
 
-      // Most common day_of_week
-      const dayFreq = {};
+      // Most common day_of_week, hour
+      const dayFreq  = {};
       const hourFreq = {};
+      const sourceFreq = {};
       const captions = [];
 
       for (const p of posts) {
         const d = new Date(p.published_at);
-        const day = d.getDay();
-        const hour = d.getHours();
-        dayFreq[day] = (dayFreq[day] || 0) + 1;
-        hourFreq[hour] = (hourFreq[hour] || 0) + 1;
+        dayFreq[d.getDay()]    = (dayFreq[d.getDay()]    || 0) + 1;
+        hourFreq[d.getHours()] = (hourFreq[d.getHours()] || 0) + 1;
         if (p.caption_snapshot) captions.push(p.caption_snapshot);
+        // Track which idea_source wins most
+        const src = p.idea_source || 'past_performance';
+        sourceFreq[src] = (sourceFreq[src] || 0) + 1;
       }
 
-      const bestDay = parseInt(Object.entries(dayFreq).sort((a, b) => b[1] - a[1])[0][0]);
+      const bestDay  = parseInt(Object.entries(dayFreq).sort((a, b) => b[1] - a[1])[0][0]);
       const bestHour = parseInt(Object.entries(hourFreq).sort((a, b) => b[1] - a[1])[0][0]);
       const topKeywords = extractTopKeywords(captions);
+      const topSource = Object.entries(sourceFreq).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
 
       dbRun(
-        `INSERT INTO winner_patterns (post_type, avg_engagement_rate, best_day_of_week, best_hour, common_topics, sample_size, last_updated)
-         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO winner_patterns (post_type, avg_engagement_rate, best_day_of_week, best_hour, common_topics, sample_size, top_source, last_updated)
+         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(post_type) DO UPDATE SET
            avg_engagement_rate = excluded.avg_engagement_rate,
-           best_day_of_week = excluded.best_day_of_week,
-           best_hour = excluded.best_hour,
-           common_topics = excluded.common_topics,
-           sample_size = excluded.sample_size,
-           last_updated = CURRENT_TIMESTAMP`,
-        [postType, avgEngagement, bestDay, bestHour, JSON.stringify(topKeywords), posts.length]
+           best_day_of_week    = excluded.best_day_of_week,
+           best_hour           = excluded.best_hour,
+           common_topics       = excluded.common_topics,
+           sample_size         = excluded.sample_size,
+           top_source          = excluded.top_source,
+           last_updated        = CURRENT_TIMESTAMP`,
+        [postType, avgEngagement, bestDay, bestHour, JSON.stringify(topKeywords), posts.length, topSource]
       );
 
       logger.info('Winner pattern updated', { postType, avgEngagement: avgEngagement.toFixed(4), bestDay, bestHour });

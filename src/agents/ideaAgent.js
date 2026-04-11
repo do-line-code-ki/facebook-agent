@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import * as facebook from '../services/facebook.js';
 import { loadContext, getDefaultContext } from '../services/contextManager.js';
+import { fetchTrendingTopics } from '../services/trendingScraper.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,16 +34,21 @@ function calculatePredictedScore(idea, winnerPatterns) {
       const today = new Date().getDay();
       const targetDay = matchingPattern.best_day_of_week;
       const diff = (targetDay - today + 7) % 7;
-      if (diff <= 3) {
-        score += 10;
-      }
+      if (diff <= 3) score += 10;
+    }
+
+    // +10 if this source previously won for this post_type
+    if (matchingPattern.top_source && idea.idea_source &&
+        matchingPattern.top_source === idea.idea_source) {
+      score += 10;
     }
   }
 
   // +10 if predicted_engagement is 'high'
-  if (idea.predicted_engagement === 'high') {
-    score += 10;
-  }
+  if (idea.predicted_engagement === 'high') score += 10;
+
+  // +8 freshness boost for trending ideas (they're timely right now)
+  if (idea.idea_source && idea.idea_source.startsWith('trending:')) score += 8;
 
   return score;
 }
@@ -108,10 +114,19 @@ async function runAutoIdeaAgent() {
     const winnerPatterns = dbAll('SELECT * FROM winner_patterns ORDER BY avg_engagement_rate DESC');
     const pageContext = getPageContext();
 
-    const rawIdeas = await claude.generateIdeasFromContext(pageContext, winnerPatterns);
+    // Fetch trending topics in parallel with no blocking (graceful failure)
+    let trendingTopics = [];
+    try {
+      trendingTopics = await fetchTrendingTopics(pageContext);
+    } catch (err) {
+      logger.warn('Trend fetch failed — continuing without trends', { error: err.message });
+    }
+
+    const rawIdeas = await claude.generateIdeasFromContext(pageContext, winnerPatterns, trendingTopics);
 
     const scoredIdeas = rawIdeas.map((idea) => ({
       ...idea,
+      idea_source: idea.idea_source || 'past_performance', // ensure field always present
       predicted_score: calculatePredictedScore(idea, winnerPatterns),
     }));
 
@@ -119,13 +134,16 @@ async function runAutoIdeaAgent() {
 
     for (const idea of scoredIdeas) {
       dbRun(
-        `INSERT INTO post_ideas (topic_id, post_type, idea_title, idea_description, predicted_score)
-         VALUES (?, ?, ?, ?, ?)`,
-        [null, idea.post_type, idea.idea_title, idea.idea_description || '', idea.predicted_score]
+        `INSERT INTO post_ideas (topic_id, post_type, idea_title, idea_description, predicted_score, idea_source)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [null, idea.post_type, idea.idea_title, idea.idea_description || '', idea.predicted_score, idea.idea_source]
       );
     }
 
-    logger.info('Auto ideas generated and saved', { count: scoredIdeas.length });
+    logger.info('Auto ideas generated and saved', {
+      count: scoredIdeas.length,
+      trending: scoredIdeas.filter(i => i.idea_source?.startsWith('trending:')).length,
+    });
     return scoredIdeas;
   } catch (err) {
     logger.error('Auto idea agent failed', { error: err.message });

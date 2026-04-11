@@ -33,22 +33,35 @@ function parseJSON(text) {
   return JSON.parse(clean);
 }
 
-async function generateIdeasFromContext(pageContext, winnerPatterns) {
-  const systemPrompt = `You are an expert social media strategist for a Facebook page. You understand what performs well based on data and page context.`;
+async function generateIdeasFromContext(pageContext, winnerPatterns, trendingTopics = []) {
+  const systemPrompt = `You are an expert social media strategist for a Facebook page. You understand what performs well based on historical data and real-world trends.`;
+
+  const trendingSection = trendingTopics.length > 0
+    ? `\nCurrently Trending (filtered for this industry — from Google News, Reddit, Google Trends):\n${JSON.stringify(
+        trendingTopics.map(t => ({ title: t.title, source: t.source, snippet: t.snippet?.slice(0, 120) }))
+      )}`
+    : '';
 
   const userPrompt = `Based on this Facebook page, generate 8 diverse post ideas that would perform well right now.
 
 Page Context: ${JSON.stringify(pageContext)}
-Past Winner Patterns: ${JSON.stringify(winnerPatterns)}
+Past Winner Patterns: ${JSON.stringify(winnerPatterns)}${trendingSection}
 
-Create ideas spanning all the page's content pillars and multiple post types. Each idea must specify:
+Rules:
+${trendingTopics.length > 0 ? '- At least 3 ideas MUST be directly inspired by the trending topics listed above.\n- All trending ideas must be relevant to the page\'s industry — never suggest off-topic trends.\n- For trending ideas, choose the most engaging/discussable topics from the list.' : ''}
+- Remaining ideas should leverage past winner patterns and page content pillars.
+- Span multiple post types and content pillars.
+
+Each idea MUST have these exact fields:
 - post_type: one of "educational", "story", "poll", "tip", "behind-the-scenes", "promotional", "user-generated"
-- idea_title: catchy, specific title for the post
-- idea_description: 1-2 sentences describing the post concept
-- why_it_will_work: brief explanation based on page context and data
+- idea_title: catchy, specific title
+- idea_description: 1-2 sentences describing the concept
+- idea_source: MUST be one of "past_performance" | "trending:google_news" | "trending:reddit" | "trending:google_trends"
+  (use "past_performance" if inspired by winner patterns or page context only)
+- why_it_will_work: brief explanation referencing the data or trend that supports this idea
 - predicted_engagement: "low", "medium", or "high"
 
-${winnerPatterns.length === 0 ? 'Note: No historical winner data yet — base predictions on page context and general best practices.' : ''}
+${winnerPatterns.length === 0 ? 'Note: No historical winner data yet — base non-trending predictions on page context and best practices.' : ''}
 
 Return a JSON array of exactly 8 idea objects. No extra text.`;
 

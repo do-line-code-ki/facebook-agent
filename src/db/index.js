@@ -28,6 +28,10 @@ function initDb() {
     // Migrations — safe to re-run (errors = column/table already exists)
     try { db.exec('ALTER TABLE post_drafts ADD COLUMN image_url TEXT'); } catch {}
     try { db.exec('ALTER TABLE published_posts ADD COLUMN page_id TEXT'); } catch {}
+    // idea_source tracks whether idea came from past_performance or a trending source
+    try { db.exec("ALTER TABLE post_ideas ADD COLUMN idea_source TEXT DEFAULT 'past_performance'"); } catch {}
+    // top_source tracks which idea source wins most for each post_type (self-improving loop)
+    try { db.exec("ALTER TABLE winner_patterns ADD COLUMN top_source TEXT"); } catch {}
     try {
       db.exec(`
         CREATE TABLE IF NOT EXISTS facebook_pages (

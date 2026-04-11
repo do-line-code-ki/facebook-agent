@@ -245,6 +245,14 @@ async function startAutoFlow() {
       return;
     }
 
+    const sourceLabel = (src) => {
+      if (!src || src === 'past_performance') return '📊 Past performance';
+      if (src === 'trending:google_news')     return '📰 Trending: Google News';
+      if (src === 'trending:reddit')          return '💬 Trending: Reddit';
+      if (src === 'trending:google_trends')   return '🔥 Trending: Google Trends';
+      return `📌 ${src}`;
+    };
+
     const listMsg =
       `🎯 *Here are ${ideas.length} post ideas for your page:*\n\n` +
       ideas
@@ -252,6 +260,7 @@ async function startAutoFlow() {
           (idea, i) =>
             `*${i + 1}. ${idea.idea_title}*\n` +
             `   Type: \`${idea.post_type}\` | Score: ${idea.predicted_score}\n` +
+            `   Source: ${sourceLabel(idea.idea_source)}\n` +
             `   ${idea.idea_description}`
         )
         .join('\n\n') +
